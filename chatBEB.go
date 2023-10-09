@@ -75,6 +75,28 @@ func caused(c1 *VectorClock, c2 map[string]int) bool {
 	return false
 }
 
+func mapToString(vc map[string]int) (string, error) {
+	// Codifica o mapa para JSON
+	jsonData, err := json.Marshal(vc)
+	if err != nil {
+		return "", err
+	}
+
+	// Converte o JSON para uma string
+	result := string(jsonData)
+	return result, nil
+}
+
+func stringToMap(data string) (map[string]int, error) {
+	// Converte a string JSON de volta para um mapa
+	var vc map[string]int
+	err := json.Unmarshal([]byte(data), &vc)
+	if err != nil {
+		return nil, err
+	}
+	return vc, nil
+}
+
 
 func dumpmap(vc map[string]int) {
 	fmt.Println("Vector Clock:")
