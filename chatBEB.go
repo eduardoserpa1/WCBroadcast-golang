@@ -14,95 +14,89 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 	"strconv"
-	"sort"
-	"encoding/json"
+	"strings"
+
 	. "SD/BEB"
 )
 
-
-type VectorClock struct {
-	Clock map[string]int
-}
-
-func NewVectorClock(processes []string) *VectorClock {
-	clock := make(map[string]int)
-	for _, process := range processes {
-		clock[process] = 0
-	}
-	return &VectorClock{Clock: clock}
-}
-
-func (vc *VectorClock) Increment(processID string) {
-	vc.Clock[processID]++
-}
-
-func formatVectorClock(clock map[string]int) string {
-	// Extract keys from the map
-	var keys []string
-	for key := range clock {
-		keys = append(keys, key)
-	}
-
-	// Sort keys in ascending order
-	sort.Strings(keys)
-
-	// Create the formatted string
-	formattedClock := "["
-	for _, key := range keys {
-		value := clock[key]
-		formattedClock += key[10:] + " : " + strconv.Itoa(value) + ", "
-	}
-	formattedClock = strings.TrimSuffix(formattedClock, ", ")
-	formattedClock += "]"
-	return formattedClock
-}
-
-func caused(c1 *VectorClock, c2 map[string]int) bool {
-	at_least_once := 0 
-	for process, timestamp := range c1.Clock {
-		if timestamp > c2[process] {
-			return false
-		}
-		if timestamp < c2[process] {
-			at_least_once++
+func inc(c [10][2]string, target string, q int) [10][2]string {
+	for i := 0; i < len(c); i++ {
+		if c[i][0] == target {
+			intc, err := strconv.Atoi(c[i][1])
+			if err != nil {
+				fmt.Println("Erro:", err)
+				return c
+			}
+			intc += q
+			c[i][1] = strconv.Itoa(intc)
 		}
 	}
-	if at_least_once > 0{
-		return true
-	}
-	return false
+	return c
 }
 
-func mapToString(vc map[string]int) (string, error) {
-	// Codifica o mapa para JSON
-	jsonData, err := json.Marshal(vc)
-	if err != nil {
-		return "", err
+func equal(c [10][2]string, target string, q int) [10][2]string {
+	for i := 0; i < len(c); i++ {
+		if c[i][0] == target {
+			intc, err := strconv.Atoi(c[i][1])
+			if err != nil {
+				fmt.Println("Erro:", err)
+				return c
+			}
+			intc = q
+			c[i][1] = strconv.Itoa(intc)
+		}
 	}
-
-	// Converte o JSON para uma string
-	result := string(jsonData)
-	return result, nil
+	return c
+}
+func stringToClock(s string) [10][2]string {
+	var clock [10][2]string
+	splitted := strings.Split(s, ",")
+	for i := 0; i < 10; i++ {
+		if i < len(splitted) {
+			spl := strings.Split(splitted[i], "&")
+			clock[i][0] = spl[0]
+			clock[i][1] = spl[1]
+		}
+	}
+	return clock
 }
 
-func stringToMap(data string) (map[string]int, error) {
-	// Converte a string JSON de volta para um mapa
-	var vc map[string]int
-	err := json.Unmarshal([]byte(data), &vc)
-	if err != nil {
-		return nil, err
+func clockToString(c [10][2]string) string {
+	var r string = ""
+	for i := 0; i < 10; i++ {
+		if c[i][0] != "" && c[i][0] != " " {
+			r += c[i][0] + "&" + c[i][1] + ","
+		}
 	}
-	return vc, nil
+	return r[:len(r)-1]
 }
 
-
-func dumpmap(vc map[string]int) {
-	fmt.Println("Vector Clock:")
-	for key, value := range vc {
-		fmt.Printf("%s: %d\n", key[10:], value)
+func formatClock(clock [10][2]string) string {
+	swap := func(i, j int) {
+		clock[i], clock[j] = clock[j], clock[i]
 	}
+
+	// Algoritmo de ordenação manual (Bubble Sort) pela segunda coluna
+	n := len(clock)
+	for i := 0; i < n-1; i++ {
+		for j := 0; j < n-i-1; j++ {
+			if clock[j][0] > clock[j+1][0] {
+				swap(j, j+1)
+			}
+		}
+	}
+
+	var r string = "C("
+	for i := 0; i < 10; i++ {
+		if clock[i][0] != "" {
+			var adr string = clock[i][0]
+			r += adr[10:] + " -> " + clock[i][1] + ", "
+		}
+	}
+	r = r[:len(r)-2]
+	r += ")"
+	return r
 }
 
 func main() {
@@ -115,10 +109,12 @@ func main() {
 		return
 	}
 
-
-	//myadress := os.Args[0]
+	var registro []string
+	idp := os.Args[1]
 	addresses := os.Args[1:]
 	fmt.Println(addresses)
+
+	clockLen := len(os.Args) - 1
 
 	beb := BestEffortBroadcast_Module{
 		Req: make(chan BestEffortBroadcast_Req_Message),
@@ -127,64 +123,78 @@ func main() {
 	//beb.Init(addresses[0])
 	beb.InitD(addresses[0], false)
 
-	// enviador de broadcasts
-	// Inicializa o vetor de relógio vetorial
-	vectorClock := NewVectorClock(addresses)
+	var vClock [10][2]string
 
-	// Enviador de broadcasts
+	if clockLen > len(vClock) {
+		fmt.Println("allocate more memory to the clock.")
+		return
+	}
+
+	for i := 0; i < len(addresses); i++ {
+		vClock[i][0] = addresses[i]
+		vClock[i][1] = "0"
+	}
+
+	//fmt.Printf("Clock init: %v\n", formatClock(vClock))
+
+	// enviador de broadcasts
 	go func() {
+
 		scanner := bufio.NewScanner(os.Stdin)
 		var msg string
 
 		for {
+			fmt.Printf("Clock: %v\n", formatClock(vClock))
+			//fmt.Println(idp)
 			if scanner.Scan() {
 				msg = scanner.Text()
-				msg += "§" + addresses[0]
+				vClock = inc(vClock, idp, 1)
+				stringClock := clockToString(vClock)
+				msg += "§" + addresses[0] + "§" + stringClock
 			}
 
-			vectorClock.Increment(addresses[0])
-		
 			req := BestEffortBroadcast_Req_Message{
 				Addresses: addresses[0:],
-				Message:   msg,
-				VectorClock: vectorClock.Clock,
-			}
-
-			fmt.Printf("--------\nreq:\n%v\n---------\n", req)
-
-
-			beb.Req <- req // ENVIA PARA TODOS OS PROCESSOS ENDEREÇADOS NO INÍCIO
+				Message:   msg}
+			//fmt.Printf("\nenviado:\n%v\n", vClock)
+			beb.Req <- req // ENVIA PARA TODOS PROCESSOS ENDERECADOS NO INICIO
 		}
 	}()
 
-	// Receptor de broadcasts
+	// receptor de broadcasts
 	go func() {
 		for {
 			in := <-beb.Ind // RECEBE MENSAGEM DE QUALQUER PROCESSO
 			message := strings.Split(in.Message, "§")
 			in.From = message[1]
+			registro = append(registro, in.Message)
 			in.Message = message[0]
 
-			dumpmap(vectorClock.Clock)
-			fmt.Println(in.VectorClock)
+			//fmt.Printf("\nrecebido:\n%v\n", message[2])
 
-			if caused(vectorClock, in.VectorClock){
-				fmt.Printf("%v CAUSOU %v \n",message,in.Message)
-			}
+			var VectorClockMatrix [10][2]string
 
-			// Atualiza o relógio vetorial com o relógio da mensagem recebida
-			for processID, value := range in.VectorClock {
-				if vectorClock.Clock[processID] < value {
-					vectorClock.Clock[processID] = value
+			VectorClockMatrix = stringToClock(message[2])
+
+			for i := 0; i < clockLen; i++ {
+				if VectorClockMatrix[i][1] == "" || VectorClockMatrix[i][1] == " " {
+					continue
 				}
+
+				for j := 0; j < clockLen; j++ {
+					if vClock[j][0] == VectorClockMatrix[i][0] {
+						if VectorClockMatrix[i][1] > vClock[j][1] {
+							vClock[j][1] = VectorClockMatrix[i][1]
+						}
+					}
+				}
+
 			}
 
-			// Incrementa o relógio vetorial do processo que enviou a mensagem
-			vectorClock.Increment(in.From)
+			vClock = inc(vClock, idp, 1)
 
-			formattedClock := formatVectorClock(vectorClock.Clock)
-        	fmt.Printf("Message from %v: %v (Vector Clock: %v)\n", in.From, in.Message, formattedClock)
- 
+			// imprime a mensagem recebida na tela
+			fmt.Printf("               Message from %v: %v,	  %v\n", in.From, in.Message, formatClock(VectorClockMatrix))
 		}
 	}()
 
